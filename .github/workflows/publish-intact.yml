@@ -1,0 +1,60 @@
+name: Publish Intact website
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+concurrency:
+  group: pages
+  cancel-in-progress: false
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Restore missing website folders from the uploaded package
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import zipfile, hashlib
+          root = Path.cwd()
+          archive = root / "Intact-GitHub-Pages (2) (1).zip"
+          expected = "ad11c5e922c12dea0e8ee38393406fbd8b2d195b5c7b8ed56f08490b6cbc85a0"
+          if hashlib.sha256(archive.read_bytes()).hexdigest() != expected:
+              raise SystemExit("The uploaded website package has changed. Review it before deploying.")
+          with zipfile.ZipFile(archive) as package:
+              for entry in package.infolist():
+                  if entry.is_dir() or entry.filename.startswith(".github/"):
+                      continue
+                  target = (root / entry.filename).resolve()
+                  if not target.is_relative_to(root):
+                      raise SystemExit("Invalid package path")
+                  if not target.exists():
+                      target.parent.mkdir(parents=True, exist_ok=True)
+                      target.write_bytes(package.read(entry))
+          assert (root / "index.html").is_file()
+          assert (root / "assets/social/intact-linkedin-film.mp4").is_file()
+          assert (root / "assets/social/carousel-07.png").is_file()
+          PY
+      - name: Save the restored assets in the repository
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add assets guide guide-privacy .nojekyll
+          if ! git diff --cached --quiet; then
+            git commit -m "Restore the complete Intact website assets"
+            git push
+          fi
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: .
+      - name: Publish the website
+        id: deployment
+        uses: actions/deploy-pages@v4
